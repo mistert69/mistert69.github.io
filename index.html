@@ -1,0 +1,491 @@
+ <!doctype html>
+<!--
+--->
+<link href="style.css" rel="stylesheet" type="text/css">
+<script src="https://cdn.jsdelivr.net/npm/vega@4.4.0"></script>
+ <script src="https://cdn.jsdelivr.net/npm/vega-lite@3.0.0-rc12"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-embed@3.29.1"></script>
+	
+ <title>Web Bluetooth / Battery Level Sample</title>
+ 
+ <button class="button" id="ConnectButton_master">Connect master</button>
+ <button class="button" onClick = "onButtonClick_slave()" id = "ConnectButton_slave">Connect slave</button>
+ <!-- <font color="grey"><p style="font-family:arial;font-color:blue;" font color="red">time at start Master is (mS):  <span id="TimerValueAtStart_master"></span><p> 
+  <p style="font-family:arial;">timer at stop Master is (mS): <span id="TimerAtStop_master"></span><p>
+  <p style="font-family:arial;">time at maxPitch Master is (mS):  <span id="timerValueAtMaxPitch_master"></span><p>
+  <p style="font-family:arial;">time at maxPitch Master Cnt is (mS):  <span id="timerValueAtMaxPitch_masterCnt"></span><p>
+  <p style="font-family:arial;">time at threshold Master is (mS):  <span id="timerValueAtThreshold_master"></span><p>
+  <p style="font-family:arial;">time at start Slave is (mS):  <span id="TimerValueAtStart_slave"></span><p>
+  <p style="font-family:arial;">timer at stop Slave is (mS): <span id="TimerAtStop_slave"></span><p>
+  <p style="font-family:arial;">time at maxPitch Slave is (mS):  <span id="timerValueAtMaxPitch_slave"></span><p>
+  <p style="font-family:arial;">time at threshold Slave is (mS):  <span id="timerValueAtThreshold_slave"></span><p> -->
+  <font color="black"><p style="font-family:arial;">max pitch slave: <span id="MaxPitch_slave"></span><p>
+  <p style="font-family:arial;">max pitch master: <span id="MaxPitch_master"></span><p>
+  <p style="font-family:arial;">timediff master/slave (ms) : <span id="timediff"></span><p>
+  <button class="button" onClick = "onButtonSetThresholdClick()">Set threshold</button>
+  <label  style="font-family:arial;" for="threshold">Threshold : </label><input id="threshold" type="number" value="100"/>  
+  <br> <br>
+  <button class="button" onClick = "onButtonDFUClick()">Go to FW update</button>
+  <button class="button" onClick = "onButtonCsvClick()">Download Csv file</button>
+
+  
+  <img class="resize centre" src="https://media.licdn.com/dms/image/C560BAQEaiqa3qYlsPQ/company-logo_200_200/0?e=2159024400&v=beta&t=ptepbzkvRI7JMeGMFG_OGVPvc0bnl_wH3ODMADikDao" alt="LSG LOGO">
+ 
+  <script type="text/javascript"> 
+     var BTLE_PACKET_LENGTH = 20
+	 var BYTES_PER_FRAME_BMI160 =  7
+     var BYTES_PER_XYZ_PAIR  =    6
+     var SPI_NR_OF_BUFS  =  23
+     var SPI_BUFFER_SIZE = 252 /*  (x,y,z,h == 7) * 36 */
+     var ELEMENTS_IN_FIFO = (252/7)
+     var TIMER_TICKS_PER_SAMPLE =  (32768/800)
+     var RAWVALUES_PER_DEGREE  = 16.4
+     
+	 var THRESHOLD_CMD = 0xF;
+     var DFU_CMD       = 0xE;
+     var datapointx = 1;
+	 var datapointy = 2;
+	 var datapointz = 3;
+	 
+	 
+     class SensorValues {
+        constructor()
+		{
+		  let remainingSamplesAtTimer;
+		  let blockCntAtTimer;
+		  let timerAtRemainingSamples;
+		  let blockCntAtThreshold;
+		  let sampleOffsetInBlockAtThreshold;
+		  let maxPitchVal;	
+          let blockCntAtMaxPitch;
+		  let sampleOffsetInBlockAtMaxPitch;
+		  let timerAtMaxPitchCnt;
+		  let timerValueAtStart;
+		  let timerValueAtMaxPitch;
+		}
+     }
+	 
+	 var sensorValMaster = new SensorValues();
+	 var sensorValSlave = new SensorValues();
+	 
+	 
+	 var bufCnt_master = 0;
+	 var sampleInBufCnt_master = 0;
+	 
+	 var buf = new Array();
+	 
+	 for (bufnr = 0; bufnr < SPI_NR_OF_BUFS; bufnr++)
+	 {
+	    buf[bufnr] = new Array();
+		for (samples = 0; samples < ELEMENTS_IN_FIFO; samples++)
+		{
+		   buf[bufnr][samples] = new Array();
+		   for(elements = 0; elements < 3; elements++)
+		   {
+		      buf[bufnr][samples][elements] = 0;
+		   }
+		}
+	 }
+	 
+	 var csvData = new Array();
+	 var csvCnt  = 0;
+	 
+	 function addCsvElement(sensorValMaster, sensorValSlave, diff)
+	 {
+	    var changed = false;
+	    if (csvCnt > 0)
+	  	{
+ 	  
+		   // check if values are changed
+		   if (csvData[csvCnt-1][0] != sensorValMaster.maxPitchVal)
+		     changed = true;
+		   if (csvData[csvCnt-1][1] != sensorValSlave.maxPitchVal)
+		     changed = true;
+		}
+		else
+		{
+			changed = true;
+		}
+		
+		if (changed == true)
+		{
+		   csvData[csvCnt] = new Array();
+		   for(elements = 0; elements < 3; elements++)
+		   {
+		      csvData[csvCnt][0] = sensorValMaster.maxPitchVal;
+		      csvData[csvCnt][1] = sensorValSlave.maxPitchVal;
+		      csvData[csvCnt][2] = diff;
+		   }
+		   csvCnt = csvCnt + 1;
+		}
+	 }
+
+  </script>
+  
+  
+    <script>
+      // Add a global error event listener early on in the page load, to help ensure that browsers
+      // which don't support specific functionality still end up displaying a meaningful message.
+      window.addEventListener('error', function(error) {
+        if (ChromeSamples && ChromeSamples.setStatus) {
+          console.error(error);
+          ChromeSamples.setStatus(error.message + ' (Your browser may not support this feature.)');
+          error.preventDefault();
+        }
+      });
+    </script>
+	
+	<script>function log(text) {
+	  console.log(text);
+	}
+	function bin2String(array) {
+       var result = "";
+	   
+	   var dataView = new DataView(array.buffer);
+	   
+	   
+       for (var i = 0; i < array.byteLength; i++) {
+           //result += String.fromCharCode(parseInt(array.buffer[i], 2));
+		   result += String.fromCharCode(dataView.getInt8(i));
+		   
+       }
+       return result;
+    }
+	
+	</script>
+	
+	<script>
+	
+	setInterval(function(){ 
+	                        diff = ((sensorValMaster.timerAtMaxPitchCnt - sensorValSlave.timerAtMaxPitchCnt)/(32.768)).toFixed(0);
+							document.getElementById("timediff").innerHTML = diff;
+                            addCsvElement(sensorValMaster, sensorValSlave, diff);	}, 2000);
+	</script>
+	
+ <script>
+ 
+ function downloadableCSV(rows) {
+  var content = "data:text/csv;charset=utf-8,";
+
+  rows.forEach(function(row, index) {
+    content += row.join(",") + "\n";
+  });
+
+  return encodeURI(content);
+}
+
+
+function onButtonCsvClick() {
+
+  
+  var data = downloadableCSV(csvData);
+  var link = document.createElement("a");
+  link.setAttribute("href", data);
+  link.setAttribute("download", "my_data.csv");
+  document.body.appendChild(link); // Required for FF
+
+  link.click(); // This will download the data file named "my_data.csv".
+
+ // window.open();
+};
+
+ 
+ 
+function onButtonSetThresholdClick() {
+  log('Requesting Bluetooth Device...');
+  navigator.bluetooth.requestDevice(
+    {filters: [{services: ['battery_service']}]})
+  .then(device => {
+    log('Connecting to GATT Server...');
+    return device.gatt.connect();
+  })
+  .then(server => {
+    log('Getting Battery Service...');
+    return server.getPrimaryService('battery_service');
+  })
+  .then(service => {
+    log('Getting Battery Level Characteristic...');
+    return service.getCharacteristic('battery_level');
+  })
+  .then(characteristic => {
+    log('Reading Battery Level...');
+	let value = new Uint32Array(2);
+	value[0] = THRESHOLD_CMD;
+    value[1] = document.getElementById("threshold").value / 10;
+	
+			
+    return characteristic.writeValue(value);
+  })
+  .then(value => {
+    //let batteryLevel = value.getUint8(0);
+    //log('> Battery Level is ' + batteryLevel + '%');
+  })
+  .catch(error => {
+    log('Argh! ' + error);
+  });
+}
+ function onButtonDFUClick() {
+  log('Requesting Bluetooth Device...');
+  navigator.bluetooth.requestDevice(
+    {filters: [{services: ['battery_service']}]})
+  .then(device => {
+    log('Connecting to GATT Server...');
+    return device.gatt.connect();
+  })
+  .then(server => {
+    log('Getting Battery Service...');
+    return server.getPrimaryService('battery_service');
+  })
+  .then(service => {
+    log('Getting Battery Level Characteristic...');
+    return service.getCharacteristic('battery_level');
+  })
+  .then(characteristic => {
+    log('Reading Battery Level...');
+	let value = new Uint32Array(2);
+	value[0] = DFU_CMD;
+    value[1] = 1;
+			
+    return characteristic.writeValue(value);
+  })
+  .then(value => {
+    //let batteryLevel = value.getUint8(0);
+    //log('> Battery Level is ' + batteryLevel + '%');
+  })
+  .catch(error => {
+    log('Argh! ' + error);
+  });
+}
+ 
+function onButtonClick_slave() {
+  log('Requesting Bluetooth Device...');
+  navigator.bluetooth.requestDevice(
+    {filters: [{services: ['heart_rate']}]})
+  .then(device => {
+    log('Connecting to GATT Server...');
+	bluetoothDevice = device;
+    bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected_slave);
+    return device.gatt.connect();
+	
+  })
+  .then(server => {
+    log('Getting  Service...');
+    return server.getPrimaryService('heart_rate');
+  })
+  .then(service => {
+    log('Getting Characteristic...');
+    return service.getCharacteristic('heart_rate_measurement');
+  })
+  .then(characteristic => characteristic.startNotifications())
+  .then(characteristic => {
+    log('Reading ...');
+	characteristic.addEventListener('characteristicvaluechanged',
+                                  handleSlaveChanged);
+    //document.getElementById('ConnectButton').textContent == "Connected"
+	var el = document.getElementById('ConnectButton_slave');
+    el.firstChild.data = "Connected_slave";
+  })
+ // .then(value => {
+ //   let batteryLevel = value.getUint8(0);
+//	let txt = bin2String(value)
+//	log ('oke: ' + txt + ' end ')
+//    log('> value is ' + value + '%');
+//  })
+  .catch(error => {
+    log('Argh! ' + error);
+  });
+}
+function onDisconnected_slave(event) {
+  // Object event.target is Bluetooth Device getting disconnected.
+  log('> Bluetooth Device slave disconnected');
+  var el = document.getElementById('ConnectButton_slave');
+   el.firstChild.data = "Connect_slave";
+}
+ 
+ function onButtonClick_master() {
+  log('Requesting Bluetooth Device...');
+  navigator.bluetooth.requestDevice(
+    {filters: [{services: ['heart_rate']}]})
+  .then(device => {
+    log('Connecting to GATT Server...');
+	bluetoothDevice = device;
+    bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected_master);
+    return device.gatt.connect();
+	
+  })
+  .then(server => {
+    log('Getting  Service...');
+    return server.getPrimaryService('heart_rate');
+  })
+  .then(service => {
+    log('Getting Characteristic...');
+    return service.getCharacteristic('heart_rate_measurement');
+  })
+  .then(characteristic => characteristic.startNotifications())
+  .then(characteristic => {
+    log('Reading ...');
+	characteristic.addEventListener('characteristicvaluechanged',
+                                  handleBatteryLevelChanged);
+    //document.getElementById('ConnectButton').textContent == "Connected"
+	var el = document.getElementById('ConnectButton_master');
+    el.firstChild.data = "Connected_master";
+  })
+ // .then(value => {
+ //   let batteryLevel = value.getUint8(0);
+//	let txt = bin2String(value)
+//	log ('oke: ' + txt + ' end ')
+//    log('> value is ' + value + '%');
+//  })
+  .catch(error => {
+    log('Argh! ' + error);
+  });
+}
+function onDisconnected_master(event) {
+  // Object event.target is Bluetooth Device getting disconnected.
+  log('> Bluetooth Device master disconnected');
+  var el = document.getElementById('ConnectButton_master');
+   el.firstChild.data = "Connect_master";
+}
+function displayData()
+{
+   bufToDisplay = blockCntAtTimer;
+   bufToDisplay++;						// this should be the oldest data block
+   if (bufToDisplay >= SPI_NR_OF_BUFS)
+	  bufToDisplay = 0;
+   
+   for (bufnr = 0; bufnr < SPI_NR_OF_BUFS; bufnr++)
+   {
+ 	  for (samples = 0; samples < ELEMENTS_IN_FIFO; samples++)
+	  {
+		 datapointx = buf[bufToDisplay][samples][0];
+		 datapointy = buf[bufToDisplay][samples][1];
+		 datapointz = buf[bufToDisplay][samples][2];
+		 window.test();
+	  }
+	  bufToDisplay++;
+	  if (bufToDisplay >= SPI_NR_OF_BUFS)
+	    bufToDisplay = 0;
+	}
+}
+DataView.prototype.getUint64 = function(byteOffset, littleEndian) {
+  // split 64-bit number into two 32-bit parts
+  const left =  this.getUint32(byteOffset, littleEndian);
+  const right = this.getUint32(byteOffset+4, littleEndian);
+  // combine the two 32-bit values
+  const combined = littleEndian? left + 2**32*right : 2**32*left + right;
+  if (!Number.isSafeInteger(combined))
+    console.warn(combined, 'exceeds MAX_SAFE_INTEGER. Precision may be lost');
+  return combined;
+}
+function parseBLEvalues(value, results)
+{
+    let nr_of_blks = 0;
+	 let retval = false;
+	 if (value.byteLength == 8) // buffer header has 20 bytes (at the moment)
+	 {
+		index = 0;
+	//	results.remainingSamplesAtTimer = value.getUint16(index, true);
+	//	index += 2;
+		
+	//    results.blockCntAtTimer = value.getUint8(index);
+	//	index++;
+        
+	//	results.timerAtRemainingSamples = value.getUint32(index, /*littleEndian=*/true);
+	//    index += 4;
+		
+	//	results.blockCntAtThreshold = value.getUint8(index);
+	//	index++;
+		
+    //    results.sampleOffsetInBlockAtThreshold = value.getUint8(index);	
+    //   index++;		
+		
+	//	results.timerValueAtStart =  results.timerAtRemainingSamples - (((SPI_NR_OF_BUFS * ELEMENTS_IN_FIFO) + results.remainingSamplesAtTimer) * TIMER_TICKS_PER_SAMPLE);
+		
+		results.maxPitchVal = value.getUint32(index, /*littleEndian=*/true);  //value.getUint64(index, /*littleEndian=*/true);
+		index += 4;
+		results.maxPitchVal = (results.maxPitchVal/ RAWVALUES_PER_DEGREE);
+		
+	//    results.blockCntAtMaxPitch =  value.getUint8(index);
+	//	index++;
+		
+	//    results.sampleOffsetInBlockAtMaxPitch = value.getUint8(index);
+	//	index++;
+		
+		results.timerAtMaxPitchCnt = value.getUint32(index, /*littleEndian=*/true);
+		index += 4;
+		
+		var correction_for_remainging_samples = 0;
+		
+	//	if (results.blockCntAtMaxPitch > results.blockCntAtTimer)
+	//	{
+	//	   nr_of_blks = results.blockCntAtMaxPitch - results.blockCntAtTimer;
+	//	}
+	//	else
+	//	{
+	//	   nr_of_blks = SPI_NR_OF_BUFS -  results.blockCntAtTimer + results.blockCntAtMaxPitch;
+	//	   correction_for_remainging_samples = results.remainingSamplesAtTimer;
+	//	}
+	//	results.timerValueAtMaxPitch =  results.timerValueAtStart + (((ELEMENTS_IN_FIFO * nr_of_blks) + results.sampleOffsetInBlockAtMaxPitch + correction_for_remainging_samples) * TIMER_TICKS_PER_SAMPLE);
+		
+	//	var correction_for_remainging_samples = 0;
+		
+	//	if (results.blockCntAtThreshold > results.blockCntAtTimer)
+	//	{
+	//	   nr_of_blks = results.blockCntAtThreshold - results.blockCntAtTimer;
+	//	}
+	//	else
+	//	{
+	//	   nr_of_blks = SPI_NR_OF_BUFS -  results.blockCntAtTimer + results.blockCntAtThreshold;
+	//	   correction_for_remainging_samples = results.remainingSamplesAtTimer;
+	//	}
+	//	results.timerValueAtThreshold =  results.timerValueAtStart + (((ELEMENTS_IN_FIFO * nr_of_blks) + results.sampleOffsetInBlockAtThreshold + correction_for_remainging_samples) * TIMER_TICKS_PER_SAMPLE);
+		retval = true;
+	  }
+	  return retval;
+}
+function handleSlaveChanged(event) {
+	var value = event.target.value;
+  
+	value = value.buffer ? value : new DataView(value);
+      
+	
+	 if (parseBLEvalues(value, sensorValSlave) == true)
+	 {
+	
+	//	document.getElementById("TimerValueAtStart_slave").innerHTML = (sensorValSlave.timerValueAtStart/(32.768)).toFixed(0); // in mS
+	//	document.getElementById("TimerAtStop_slave").innerHTML = (sensorValSlave.timerAtRemainingSamples/(32.768)).toFixed(0);
+	//	document.getElementById("timerValueAtMaxPitch_slave").innerHTML = (sensorValSlave.timerValueAtMaxPitch/(32.768)).toFixed(0); // in mS
+		document.getElementById("MaxPitch_slave").innerHTML = (sensorValSlave.maxPitchVal).toFixed(0); // in mS
+	//	document.getElementById("timerValueAtThreshold_slave").innerHTML = (sensorValSlave.timerValueAtThreshold/32.768).toFixed(0);
+	 }
+	
+}
+function handleBatteryLevelChanged(event) {
+  var value = event.target.value;
+  
+  
+   value = value.buffer ? value : new DataView(value);
+   if (parseBLEvalues(value, sensorValMaster))
+   {
+		
+	//	document.getElementById("TimerValueAtStart_master").innerHTML = (sensorValMaster.timerValueAtStart/(32.768)).toFixed(0); // in mS
+	//	document.getElementById("TimerAtStop_master").innerHTML = (sensorValMaster.timerAtRemainingSamples/(32.768)).toFixed(0);
+	//	document.getElementById("timerValueAtMaxPitch_master").innerHTML = (sensorValMaster.timerValueAtMaxPitch/(32.768)).toFixed(0); // in mS
+	//	document.getElementById("timerValueAtMaxPitch_masterCnt").innerHTML = (sensorValMaster.timerAtMaxPitchCnt/(32.768)).toFixed(0); 
+		document.getElementById("MaxPitch_master").innerHTML = (sensorValMaster.maxPitchVal).toFixed(0); // in mS
+	//	document.getElementById("timerValueAtThreshold_master").innerHTML = (sensorValMaster.timerValueAtThreshold/32.768).toFixed(0);
+   }
+   
+}
+</script>
+
+<script>
+  document.querySelector('button').addEventListener('click', function() {
+      onButtonClick_master();
+  });
+
+  
+  
+  
+  
+</script>
